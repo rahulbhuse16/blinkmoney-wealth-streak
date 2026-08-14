@@ -11,7 +11,6 @@ import {
   WealthProfile,
 } from "../types";
 
-
 let profileState: WealthProfile = { ...DEFAULT_WEALTH_PROFILE };
 
 export const networkConfig = {
