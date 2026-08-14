@@ -1,5 +1,12 @@
 import React from "react";
-import { Animated, Pressable, StyleSheet, Text, View } from "react-native";
+import {
+  Animated,
+  LayoutChangeEvent,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 
 import { Button } from "@/components/Button";
 import {
@@ -21,6 +28,7 @@ interface WalkthroughTooltipProps {
   onNext: () => void;
   onBack: () => void;
   onSkip: () => void;
+  onLayout?: (event: LayoutChangeEvent) => void;
   /** Absolute position + entrance animation, supplied by the overlay. */
   style?: React.ComponentProps<typeof Animated.View>["style"];
 }
@@ -35,6 +43,7 @@ export function WalkthroughTooltip({
   onNext,
   onBack,
   onSkip,
+  onLayout,
   style,
 }: WalkthroughTooltipProps) {
   const isLastStep = stepIndex === stepCount - 1;
@@ -42,6 +51,7 @@ export function WalkthroughTooltip({
   return (
     <Animated.View
       style={[styles.tooltip, style]}
+      onLayout={onLayout}
       accessible={false}
       // React Native has no "dialog" accessibility role; "alert" is the closest
       // supported role and makes screen readers announce the tooltip content.

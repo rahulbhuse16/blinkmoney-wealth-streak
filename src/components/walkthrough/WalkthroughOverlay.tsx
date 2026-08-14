@@ -7,9 +7,11 @@ import React, {
 } from "react";
 import {
   Animated,
-  Modal,
+  BackHandler,
+  LayoutChangeEvent,
   Pressable,
   StyleSheet,
+  View,
   useWindowDimensions,
   ViewStyle,
 } from "react-native";
@@ -29,11 +31,27 @@ import { radius as radiusTokens, spacing } from "@/theme";
 const SPOTLIGHT_DURATION = 260;
 const TOOLTIP_IN_DURATION = 220;
 const TOOLTIP_OUT_DURATION = 140;
-const MEASURE_RETRIES = 5;
-const MEASURE_RETRY_DELAY = 120;
-const SCROLL_SETTLE_DELAY = 340;
+/**
+ * Targets are polled until two consecutive measurements agree: layout, the
+ * dashboard fade-in and momentum scrolling settle at device-dependent speeds,
+ * and any fixed delay is either too short (stale spotlight) or wasteful.
+ */
+const MEASURE_ATTEMPTS = 14;
+const MEASURE_INTERVAL = 80;
+const MEASURE_EPSILON = 1;
+const SCROLL_START_DELAY = 160;
 /** Used only to choose above/below placement before the tooltip has laid out. */
 const ESTIMATED_TOOLTIP_HEIGHT = 210;
+const MIN_TOOLTIP_HEIGHT = 140;
+
+function rectsAgree(a: TargetRect, b: TargetRect) {
+  return (
+    Math.abs(a.x - b.x) <= MEASURE_EPSILON &&
+    Math.abs(a.y - b.y) <= MEASURE_EPSILON &&
+    Math.abs(a.width - b.width) <= MEASURE_EPSILON &&
+    Math.abs(a.height - b.height) <= MEASURE_EPSILON
+  );
+}
 
 interface WalkthroughOverlayProps {
   steps: WalkthroughStep[];
@@ -54,8 +72,10 @@ interface ResolvedTarget {
 
 /**
  * Contextual spotlight walkthrough. Targets are measured at runtime — nothing
- * is hardcoded — and the whole thing lives in a transparent modal so the real
- * dashboard stays visible underneath while taps are safely absorbed.
+ * is hardcoded — and the overlay is an absolutely-positioned sibling of the
+ * screen content (not a Modal) so measured window coordinates and the overlay
+ * share one coordinate space, with the overlay's own origin subtracted to stay
+ * exact under a translucent status bar.
  */
 export function WalkthroughOverlay({
   steps,
@@ -71,6 +91,7 @@ export function WalkthroughOverlay({
   const insets = useSafeAreaInsets();
 
   const [target, setTarget] = useState<ResolvedTarget | null>(null);
+  const [tooltipHeight, setTooltipHeight] = useState<number | null>(null);
 
   const geometry = useRef({
     x: new Animated.Value(0),
@@ -78,6 +99,7 @@ export function WalkthroughOverlay({
     width: new Animated.Value(0),
     height: new Animated.Value(0),
   }).current;
+  const rootRef = useRef<View>(null);
   const overlayOpacity = useRef(new Animated.Value(0)).current;
   const tooltipOpacity = useRef(new Animated.Value(0)).current;
   const tooltipTranslate = useRef(new Animated.Value(10)).current;
@@ -110,15 +132,23 @@ export function WalkthroughOverlay({
         animation.start(() => resolve());
       });
 
-    const measureWithRetry = async (id: string) => {
-      for (let attempt = 0; attempt < MEASURE_RETRIES; attempt += 1) {
+    /**
+     * Resolves once the target reports the same rect twice in a row, so the
+     * spotlight is never positioned from a mid-scroll or pre-layout value.
+     */
+    const measureSettled = async (id: string) => {
+      let previous: TargetRect | null = null;
+      for (let attempt = 0; attempt < MEASURE_ATTEMPTS; attempt += 1) {
         const measured = await measureTarget(id);
         if (cancelled) return null;
-        if (measured) return measured;
-        await wait(MEASURE_RETRY_DELAY);
+        if (measured && previous && rectsAgree(measured, previous)) {
+          return measured;
+        }
+        previous = measured;
+        await wait(MEASURE_INTERVAL);
         if (cancelled) return null;
       }
-      return null;
+      return previous;
     };
 
     const run = async () => {
@@ -133,16 +163,34 @@ export function WalkthroughOverlay({
         if (cancelled) return;
       }
 
-      let rect = await measureWithRetry(step.id);
+      /** Window coordinates of the overlay itself, so targets can be mapped in. */
+      const measureOrigin = () =>
+        new Promise<{ x: number; y: number }>((resolve) => {
+          const node = rootRef.current;
+          if (!node || typeof node.measureInWindow !== "function") {
+            resolve({ x: 0, y: 0 });
+            return;
+          }
+          node.measureInWindow((x, y) =>
+            resolve({
+              x: Number.isFinite(x) ? x : 0,
+              y: Number.isFinite(y) ? y : 0,
+            }),
+          );
+        });
+
+      let rect = await measureSettled(step.id);
       if (cancelled) return;
 
       if (rect && ensureTargetVisible) {
         const didScroll = await ensureTargetVisible(rect);
         if (cancelled) return;
         if (didScroll) {
-          await wait(SCROLL_SETTLE_DELAY);
+          // Let the scroll actually start before polling, otherwise two
+          // pre-scroll samples would look "settled".
+          await wait(SCROLL_START_DELAY);
           if (cancelled) return;
-          rect = (await measureWithRetry(step.id)) ?? rect;
+          rect = (await measureSettled(step.id)) ?? rect;
           if (cancelled) return;
         }
       }
@@ -154,10 +202,13 @@ export function WalkthroughOverlay({
         return;
       }
 
+      const origin = await measureOrigin();
+      if (cancelled) return;
+
       const pad = step.spotlightPadding ?? spacing.xs;
       const padded: TargetRect = {
-        x: Math.max(0, rect.x - pad),
-        y: Math.max(0, rect.y - pad),
+        x: Math.max(0, rect.x - origin.x - pad),
+        y: Math.max(0, rect.y - origin.y - pad),
         width: Math.min(windowWidth, rect.width + pad * 2),
         height: Math.min(windowHeight, rect.height + pad * 2),
       };
@@ -253,6 +304,7 @@ export function WalkthroughOverlay({
     const gap = spacing.sm;
     const margin = spacing.lg;
     const { rect } = target;
+    const needed = tooltipHeight ?? ESTIMATED_TOOLTIP_HEIGHT;
 
     const spaceBelow =
       windowHeight - insets.bottom - (rect.y + rect.height) - gap;
@@ -260,7 +312,7 @@ export function WalkthroughOverlay({
     const placement =
       step?.placement && step.placement !== "auto"
         ? step.placement
-        : spaceBelow >= ESTIMATED_TOOLTIP_HEIGHT || spaceBelow >= spaceAbove
+        : spaceBelow >= needed || spaceBelow >= spaceAbove
           ? "below"
           : "above";
 
@@ -273,31 +325,53 @@ export function WalkthroughOverlay({
       ? {
           ...base,
           top: rect.y + rect.height + gap,
-          maxHeight: Math.max(140, spaceBelow),
+          maxHeight: Math.max(MIN_TOOLTIP_HEIGHT, spaceBelow),
         }
       : {
           ...base,
           bottom: windowHeight - rect.y + gap,
-          maxHeight: Math.max(140, spaceAbove),
+          maxHeight: Math.max(MIN_TOOLTIP_HEIGHT, spaceAbove),
         };
-  }, [target, step, windowWidth, windowHeight, insets.top, insets.bottom]);
+  }, [
+    target,
+    step,
+    tooltipHeight,
+    windowWidth,
+    windowHeight,
+    insets.top,
+    insets.bottom,
+  ]);
 
   const handleOverlayPress = useCallback(() => {
     // Absorb stray taps: progression is explicit, via the tooltip controls.
   }, []);
+
+  const handleTooltipLayout = useCallback((e: LayoutChangeEvent) => {
+    const { height } = e.nativeEvent.layout;
+    setTooltipHeight((current) =>
+      current !== null && Math.abs(current - height) <= 1 ? current : height,
+    );
+  }, []);
+
+  // Android hardware back exits the walkthrough rather than the screen.
+  useEffect(() => {
+    if (!visible) return;
+    const subscription = BackHandler.addEventListener(
+      "hardwareBackPress",
+      () => {
+        onSkip();
+        return true;
+      },
+    );
+    return () => subscription.remove();
+  }, [visible, onSkip]);
 
   if (!visible || !step) return null;
 
   const isLastStep = currentStep === steps.length - 1;
 
   return (
-    <Modal
-      visible
-      transparent
-      animationType="none"
-      statusBarTranslucent
-      onRequestClose={onSkip}
-    >
+    <View ref={rootRef} style={[StyleSheet.absoluteFill, styles.root]}>
       <Pressable
         style={StyleSheet.absoluteFill}
         onPress={handleOverlayPress}
@@ -321,6 +395,7 @@ export function WalkthroughOverlay({
             onNext={onNext}
             onBack={onBack}
             onSkip={onSkip}
+            onLayout={handleTooltipLayout}
             style={[
               tooltipStyle,
               {
@@ -331,6 +406,11 @@ export function WalkthroughOverlay({
           />
         </>
       ) : null}
-    </Modal>
+    </View>
   );
 }
+
+const styles = StyleSheet.create({
+  // Sits above sibling cards, which carry their own Android elevation.
+  root: { zIndex: 20, elevation: 24 },
+});
