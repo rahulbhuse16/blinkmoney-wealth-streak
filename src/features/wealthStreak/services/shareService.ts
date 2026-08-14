@@ -1,7 +1,6 @@
 import * as Sharing from "expo-sharing";
 import { Platform, Share, View } from "react-native";
 
-
 export const shareService = {
   async shareAchievementImage(
     viewRef: React.RefObject<View>,

@@ -55,14 +55,23 @@ export function useWalkthroughTargets() {
   );
 }
 
+/**
+ * Walkthroughs already shown during this app session, keyed by walkthrough id.
+ *
+ * Module scope (plain memory, never written to storage) so a screen that gets
+ * re-mounted by navigation — e.g. returning from the invest success flow —
+ * does not replay the walkthrough. A fresh app launch resets it.
+ */
+const shownWalkthroughs = new Set<string>();
+
 export interface WalkthroughController {
   isVisible: boolean;
   currentStep: number;
-  /** Starts the walkthrough at most once per mounted session. */
+  /** Starts the walkthrough at most once per app session. */
   startOnce: () => void;
   next: () => void;
   back: () => void;
-  /** Closes the walkthrough (skip or "Got it") for this mounted session. */
+  /** Closes the walkthrough (skip or "Got it") for this app session. */
   dismiss: () => void;
 }
 
@@ -70,18 +79,19 @@ export interface WalkthroughController {
  * In-memory walkthrough state. Intentionally NOT persisted: on a fresh app
  * launch the walkthrough is eligible to run again.
  */
-export function useWalkthroughState(stepCount: number): WalkthroughController {
+export function useWalkthroughState(
+  id: string,
+  stepCount: number,
+): WalkthroughController {
   const [isVisible, setIsVisible] = useState(false);
   const [currentStep, setCurrentStep] = useState(0);
-  // Guards re-entry after a skip/completion within this mounted session.
-  const hasStartedRef = useRef(false);
 
   const startOnce = useCallback(() => {
-    if (hasStartedRef.current || stepCount <= 0) return;
-    hasStartedRef.current = true;
+    if (shownWalkthroughs.has(id) || stepCount <= 0) return;
+    shownWalkthroughs.add(id);
     setCurrentStep(0);
     setIsVisible(true);
-  }, [stepCount]);
+  }, [id, stepCount]);
 
   const dismiss = useCallback(() => setIsVisible(false), []);
 

@@ -70,7 +70,10 @@ export default function WealthHomeScreen() {
   const { onScroll, ensureTargetVisible } = useWalkthroughScroll(scrollRef, {
     topInset: insets.top + spacing.xxl,
   });
-  const walkthrough = useWalkthroughState(WEALTH_WALKTHROUGH_STEPS.length);
+  const walkthrough = useWalkthroughState(
+    "wealthHome",
+    WEALTH_WALKTHROUGH_STEPS.length,
+  );
   const canRunWalkthrough =
     !isLoading && !error && !!profile && !profile.isFirstTimeUser;
 
