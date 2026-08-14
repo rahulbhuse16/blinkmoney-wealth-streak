@@ -159,7 +159,7 @@ export default function WealthCircleScreen() {
   if (!circle) {
     return (
       <View style={styles.screen}>
-        <Header title="Wealth Circle" onBack={() => navigation.goBack()} />
+        <Header title="Wealth Circle" onBack={() => navigation.navigate('WealthHome')} />
         <View style={styles.center}>
           <EmptyState
             emoji="👥"
@@ -186,7 +186,7 @@ export default function WealthCircleScreen() {
   return (
     <View style={styles.screen}>
       {isCompleted ? <ConfettiBurst active={showConfetti} /> : null}
-      <Header title="Wealth Circle" onBack={() => navigation.goBack()} />
+      <Header title="Wealth Circle" onBack={() => navigation.navigate('WealthHome')} />
       <ScrollView
         contentContainerStyle={{
           padding: spacing.lg,

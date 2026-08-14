@@ -9,12 +9,7 @@ import {
 
 import { TargetRect } from "./walkthroughTypes";
 
-/**
- * Registers walkthrough targets and measures them on demand.
- *
- * Nothing here is persisted and no state is stored — refs only — so attaching
- * a target to an existing component never causes it to re-render.
- */
+
 export function useWalkthroughTargets() {
   const targetsRef = useRef<Record<string, View | null>>({});
 

@@ -1,9 +1,4 @@
-/**
- * Shared types for the contextual walkthrough. Kept free of React imports so
- * feature code can describe steps without pulling in the overlay.
- */
 
-/** A measured target, in window coordinates. */
 export interface TargetRect {
   x: number;
   y: number;
