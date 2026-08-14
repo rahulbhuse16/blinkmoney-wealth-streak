@@ -1,7 +1,11 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useFocusEffect, useNavigation } from "@react-navigation/native";
+import {
+  useFocusEffect,
+  useIsFocused,
+  useNavigation,
+} from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Animated,
   Pressable,
@@ -13,6 +17,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { WEALTH_WALKTHROUGH_STEPS } from "../constants/walkthroughSteps";
 import { useWealthContext } from "../hooks/useWealthContext";
 import { wealthService } from "../services/wealthService";
 import { Achievement } from "../types";
@@ -26,6 +31,12 @@ import { DashboardSkeleton } from "@/components/LoadingSkeleton";
 import { ProgressBar } from "@/components/ProgressBar";
 import { StatCard } from "@/components/StatCard";
 import { StreakBadge } from "@/components/StreakBadge";
+import {
+  WalkthroughOverlay,
+  useWalkthroughScroll,
+  useWalkthroughState,
+  useWalkthroughTargets,
+} from "@/components/walkthrough";
 import { WealthCircleTeaserCard } from "@/features/wealthCircle/components/WealthCircleTeaserCard";
 import { wealthCircleService } from "@/features/wealthCircle/services/wealthCircleService";
 import { RootStackParamList } from "@/navigation/types";
@@ -51,6 +62,21 @@ export default function WealthHomeScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [hasWealthCircle, setHasWealthCircle] = useState(false);
   const fadeAnim = React.useRef(new Animated.Value(0)).current;
+
+  // Contextual walkthrough — in-memory only, never persisted.
+  const isFocused = useIsFocused();
+  const scrollRef = useRef<ScrollView>(null);
+  const { setTargetRef, measureTarget } = useWalkthroughTargets();
+  const { onScroll, ensureTargetVisible } = useWalkthroughScroll(scrollRef, {
+    topInset: insets.top + spacing.xxl,
+  });
+  const walkthrough = useWalkthroughState(WEALTH_WALKTHROUGH_STEPS.length);
+  const canRunWalkthrough =
+    !isLoading && !error && !!profile && !profile.isFirstTimeUser;
+
+  useEffect(() => {
+    if (canRunWalkthrough) walkthrough.startOnce();
+  }, [canRunWalkthrough, walkthrough]);
 
   const loadAchievements = useCallback(async () => {
     try {
@@ -175,6 +201,9 @@ export default function WealthHomeScreen() {
   return (
     <View style={styles.screen}>
       <ScrollView
+        ref={scrollRef}
+        onScroll={onScroll}
+        scrollEventThrottle={16}
         contentContainerStyle={{
           paddingTop: insets.top + spacing.md,
           paddingBottom: spacing.xxxl,
@@ -229,25 +258,27 @@ export default function WealthHomeScreen() {
             </Card>
           ) : null}
 
-          <Card style={styles.heroCard} elevated>
-            <StreakBadge days={profile.currentStreakDays} size="hero" />
-            {profile.nextMilestone ? (
-              <View style={styles.milestoneProgressWrap}>
-                <View style={styles.milestoneProgressLabelRow}>
-                  <Text style={styles.milestoneProgressLabel}>
-                    {profile.currentStreakDays} /{" "}
-                    {profile.nextMilestone.targetDays} days
-                  </Text>
-                  <Text style={styles.milestoneProgressLabel}>
-                    {daysToMilestone === 0
-                      ? "Milestone reached!"
-                      : `${daysToMilestone} ${daysToMilestone === 1 ? "day" : "days"} to your next badge`}
-                  </Text>
+          <View ref={setTargetRef("streak")} collapsable={false}>
+            <Card style={styles.heroCard} elevated>
+              <StreakBadge days={profile.currentStreakDays} size="hero" />
+              {profile.nextMilestone ? (
+                <View style={styles.milestoneProgressWrap}>
+                  <View style={styles.milestoneProgressLabelRow}>
+                    <Text style={styles.milestoneProgressLabel}>
+                      {profile.currentStreakDays} /{" "}
+                      {profile.nextMilestone.targetDays} days
+                    </Text>
+                    <Text style={styles.milestoneProgressLabel}>
+                      {daysToMilestone === 0
+                        ? "Milestone reached!"
+                        : `${daysToMilestone} ${daysToMilestone === 1 ? "day" : "days"} to your next badge`}
+                    </Text>
+                  </View>
+                  <ProgressBar progress={milestoneProgress} height={8} />
                 </View>
-                <ProgressBar progress={milestoneProgress} height={8} />
-              </View>
-            ) : null}
-          </Card>
+              ) : null}
+            </Card>
+          </View>
 
           <View style={styles.statsRow}>
             <StatCard
@@ -263,15 +294,25 @@ export default function WealthHomeScreen() {
               accentColor={colors.mint}
               delta="+6.6%"
             />
-            <StatCard
-              label="Wealth XP"
-              value={profile.currentXP.toLocaleString()}
-              iconName="star-outline"
-              accentColor={colors.info}
-            />
+            <View
+              ref={setTargetRef("xp")}
+              collapsable={false}
+              style={styles.xpTargetWrap}
+            >
+              <StatCard
+                label="Wealth XP"
+                value={profile.currentXP.toLocaleString()}
+                iconName="star-outline"
+                accentColor={colors.info}
+              />
+            </View>
           </View>
 
-          <View style={styles.ctaWrap}>
+          <View
+            ref={setTargetRef("invest")}
+            collapsable={false}
+            style={styles.ctaWrap}
+          >
             {profile.hasInvestedToday ? (
               <Card variant="subtle" style={styles.completeCard}>
                 <Ionicons
@@ -317,64 +358,84 @@ export default function WealthHomeScreen() {
               onPress={() => navigation.navigate("Achievements")}
             />
           </View>
-
-          <View style={styles.achievementsHeaderRow}>
-            <Text style={styles.sectionTitle}>Your Achievements</Text>
-            <Text
-              style={styles.sectionLink}
-              onPress={() => navigation.navigate("Achievements")}
-            >
-              See all
-            </Text>
-          </View>
         </Animated.View>
 
-        {achievementsError ? (
-          <View style={{ paddingHorizontal: spacing.lg }}>
-            <ErrorState
-              compact
-              title="Couldn't load achievements."
-              onRetry={loadAchievements}
-            />
-          </View>
-        ) : achievements === null ? (
-          <View
-            style={{
-              paddingHorizontal: spacing.lg,
-              flexDirection: "row",
-              gap: spacing.md,
-            }}
-          >
-            <View style={styles.achievementSkeleton} />
-            <View style={styles.achievementSkeleton} />
-          </View>
-        ) : achievements.length === 0 ? (
-          <View style={{ paddingHorizontal: spacing.lg }}>
-            <EmptyState
-              emoji="🏅"
-              title="No achievements yet"
-              description="Keep investing to unlock your first badge."
-            />
-          </View>
-        ) : (
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{
-              paddingHorizontal: spacing.lg,
-              gap: spacing.md,
-            }}
-          >
-            {achievements.map((a) => (
-              <AchievementCard
-                key={a.id}
-                achievement={a}
+        <View ref={setTargetRef("milestones")} collapsable={false}>
+          <Animated.View style={{ opacity: fadeAnim }}>
+            <View
+              style={[
+                styles.achievementsHeaderRow,
+                { paddingHorizontal: spacing.lg },
+              ]}
+            >
+              <Text style={styles.sectionTitle}>Your Achievements</Text>
+              <Text
+                style={styles.sectionLink}
                 onPress={() => navigation.navigate("Achievements")}
+              >
+                See all
+              </Text>
+            </View>
+          </Animated.View>
+
+          {achievementsError ? (
+            <View style={{ paddingHorizontal: spacing.lg }}>
+              <ErrorState
+                compact
+                title="Couldn't load achievements."
+                onRetry={loadAchievements}
               />
-            ))}
-          </ScrollView>
-        )}
+            </View>
+          ) : achievements === null ? (
+            <View
+              style={{
+                paddingHorizontal: spacing.lg,
+                flexDirection: "row",
+                gap: spacing.md,
+              }}
+            >
+              <View style={styles.achievementSkeleton} />
+              <View style={styles.achievementSkeleton} />
+            </View>
+          ) : achievements.length === 0 ? (
+            <View style={{ paddingHorizontal: spacing.lg }}>
+              <EmptyState
+                emoji="🏅"
+                title="No achievements yet"
+                description="Keep investing to unlock your first badge."
+              />
+            </View>
+          ) : (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={{
+                paddingHorizontal: spacing.lg,
+                gap: spacing.md,
+              }}
+            >
+              {achievements.map((a) => (
+                <AchievementCard
+                  key={a.id}
+                  achievement={a}
+                  onPress={() => navigation.navigate("Achievements")}
+                />
+              ))}
+            </ScrollView>
+          )}
+        </View>
       </ScrollView>
+
+      <WalkthroughOverlay
+        steps={WEALTH_WALKTHROUGH_STEPS}
+        visible={walkthrough.isVisible && isFocused}
+        currentStep={walkthrough.currentStep}
+        measureTarget={measureTarget}
+        ensureTargetVisible={ensureTargetVisible}
+        onNext={walkthrough.next}
+        onBack={walkthrough.back}
+        onSkip={walkthrough.dismiss}
+      />
     </View>
   );
 }
@@ -474,6 +535,7 @@ const styles = StyleSheet.create({
   },
   statsRow: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.md },
   ctaWrap: { marginTop: spacing.lg },
+  xpTargetWrap: { flex: 1 },
   completeCard: { flexDirection: "row", alignItems: "center" },
   completeTitle: {
     color: colors.textPrimary,
